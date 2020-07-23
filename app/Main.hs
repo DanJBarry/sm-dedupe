@@ -18,13 +18,9 @@ import           Text.Parsec.Text.Lazy
 dedupe :: [FilePath] -> Map (Set (Digest SHA1State)) [Char] -> IO [Char]
 dedupe [] songs = do
   putStrLn "Showing chartkeys"
-  return
-    $ foldl
-        (\acc file ->
-          foldl (\acc2 digest -> acc2 ++ " " ++ showDigest digest) acc file
-        )
-        "Chartkeys:"
-    $ Map.keys songs
+  return $ foldl (foldl ((. ((' ' :) . showDigest)) . (++)))
+                 "Chartkeys:"
+                 (Map.keys songs)
 dedupe (path : paths) songs = do
   isFile <- doesFileExist path
   if isExtensionOf "sm" path && isFile
@@ -42,7 +38,7 @@ dedupe (path : paths) songs = do
                         ++ target
                         ++ " in "
                         ++ parent
-                      putStrLn $ "Creating symlink..."
+                      putStrLn "Creating symlink..."
                       removeDirectoryRecursive parent
                       createDirectoryLink target parent
                       dedupe paths songs
@@ -52,11 +48,8 @@ dedupe (path : paths) songs = do
       if isDirectory
         then do
           contents <- getDirectoryContents path
-          dedupe
-            ((map (\content -> path ++ "/" ++ content) $ filter notDot contents)
-            ++ paths
-            )
-            songs
+          dedupe (map ((path ++ "/") ++) (filter notDot contents) ++ paths)
+                 songs
         else dedupe paths songs
 
 main :: IO ()

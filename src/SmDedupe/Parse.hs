@@ -85,7 +85,7 @@ multipleBpms = do
 
 parseBpms :: Parser Section
 parseBpms = do
-  result <- (try singleBpm) <|> multipleBpms
+  result <- try singleBpm <|> multipleBpms
   return $ Bpms result
 
 section :: Parser Section
@@ -108,12 +108,11 @@ comment = do
 parseSm :: Parser Song
 parseSm = do
   results <- manyTill section eof
-  let song = Song { bpms = [], charts = [] }
   return $ foldl
     (\song section -> case section of
-      Bpms  newBpms  -> (Song newBpms $ charts song)
-      Chart newChart -> (Song (bpms song) $ charts song ++ [newChart])
-      Extra          -> (Song (bpms song) $ charts song)
+      Bpms  newBpms  -> song { bpms = newBpms }
+      Chart newChart -> song { charts = charts song ++ [newChart] }
+      Extra          -> song
     )
-    song
+    Song { bpms = [], charts = [] }
     results
