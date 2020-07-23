@@ -1,0 +1,84 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.33.0.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: ba1d1feb06d764e11f0acf14c43c7827325e8934d1bc5db89ee41bff2eaacdfa
+
+name:           sm-dedupe
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/githubuser/sm-dedupe#readme>
+homepage:       https://github.com/DanJBarry/sm-dedupe#readme
+bug-reports:    https://github.com/DanJBarry/sm-dedupe/issues
+author:         Daniel Barry
+maintainer:     dbarry@stevens.edu
+copyright:      2020 Daniel Barry
+license:        MIT
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    ChangeLog.md
+
+source-repository head
+  type: git
+  location: https://github.com/DanJBarry/sm-dedupe
+
+library
+  exposed-modules:
+      SmDedupe
+      SmDedupe.Parse
+  other-modules:
+      Paths_sm_dedupe
+  hs-source-dirs:
+      src
+  build-depends:
+      SHA >=1.6.4.4 && <2
+    , base >=4.14.0.0 && <5
+    , bytestring >=0.10.10.0 && <1
+    , containers >=0.6.2.1 && <1
+    , directory >=1.3.6.0 && <2
+    , filepath >=1.4.2.1 && <2
+    , parsec >=3.1.14.0 && <4
+    , text >=1.2.3.2 && <2
+  default-language: Haskell2010
+
+executable sm-dedupe-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_sm_dedupe
+  hs-source-dirs:
+      app
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      SHA >=1.6.4.4 && <2
+    , base >=4.14.0.0 && <5
+    , bytestring >=0.10.10.0 && <1
+    , containers >=0.6.2.1 && <1
+    , directory >=1.3.6.0 && <2
+    , filepath >=1.4.2.1 && <2
+    , parsec >=3.1.14.0 && <4
+    , sm-dedupe
+    , text >=1.2.3.2 && <2
+  default-language: Haskell2010
+
+test-suite sm-dedupe-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_sm_dedupe
+  hs-source-dirs:
+      test
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      SHA >=1.6.4.4 && <2
+    , base >=4.14.0.0 && <5
+    , bytestring >=0.10.10.0 && <1
+    , containers >=0.6.2.1 && <1
+    , directory >=1.3.6.0 && <2
+    , filepath >=1.4.2.1 && <2
+    , parsec >=3.1.14.0 && <4
+    , sm-dedupe
+    , text >=1.2.3.2 && <2
+  default-language: Haskell2010
