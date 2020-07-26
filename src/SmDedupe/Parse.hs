@@ -10,10 +10,10 @@ where
 import           Text.Parsec
 import           Text.Parsec.Text.Lazy
 
-data Section = Bpms [(Float, Float)] | Chart [[String]] | Extra
+data Section = Bpms [(Double, Double)] | Chart [[String]] | Extra
 
 data Song = Song
-  { bpms :: [(Float, Float)],
+  { bpms :: [(Double, Double)],
     charts :: [[[String]]]
   }
   deriving (Show)
@@ -66,19 +66,19 @@ extra = do
   spaces
   return Extra
 
-bpm :: Parser (Float, Float)
+bpm :: Parser (Double, Double)
 bpm = do
   beat  <- manyTill anyChar $ char '='
   value <- many $ noneOf ",;"
   return (read beat, read value)
 
-singleBpm :: Parser [(Float, Float)]
+singleBpm :: Parser [(Double, Double)]
 singleBpm = do
   beat  <- manyTill anyChar $ char '='
   value <- manyTill (noneOf ",") endSection
   return [(read beat, read value)]
 
-multipleBpms :: Parser [(Float, Float)]
+multipleBpms :: Parser [(Double, Double)]
 multipleBpms = do
   (result : _) <- manyTill (sepBy1 bpm comma) endSection
   return result
