@@ -16,22 +16,26 @@ import           Control.Monad
 withEndBeats :: [(b, c)] -> b -> [(b, b, c)]
 withEndBeats songBpms totalBeats =
   let (startBeats, values) = unzip songBpms
-  in  let endBeats = (tail startBeats ++ [totalBeats])
-      in  zip3 startBeats endBeats values
+      endBeats             = tail startBeats ++ [totalBeats]
+  in  zip3 startBeats endBeats values
+
 
 -- | Add duration in minutes of given beat to acc
 foldBeats :: Num a => a -> (a, a, a) -> a
 foldBeats acc (startBeat, endBeat, value) = acc + (endBeat - startBeat) * value
 
--- | Get the average bpm of a song
-averageBpm :: Song -> Float
+-- | Get the average bpm of a song when it has multiple bpms
+averageBpm' :: Song -> Double
+averageBpm' (Song songBpms songCharts) =
+  let totalBeats = fromIntegral $ length (head songCharts) * 4
+      beatsSum   = foldl foldBeats 0 (withEndBeats songBpms totalBeats)
+  in  beatsSum / totalBeats
+
+-- | Get the average bpm of a song, checking if the song only has one bpm
+averageBpm :: Song -> Double
 averageBpm (Song songBpms songCharts) = if length songBpms == 1
   then snd $ head songBpms
-  else
-    let totalBeats = fromIntegral $ length (head songCharts) * 4
-    in  let plusEndBeats = withEndBeats songBpms totalBeats
-        in  let beatsSum = foldl foldBeats 0 plusEndBeats
-            in  beatsSum / totalBeats
+  else averageBpm' (Song songBpms songCharts)
 
 -- | Check if the value of a row is "0000"
 notEmpty :: (String, b) -> Bool
@@ -41,48 +45,43 @@ notEmpty = ("0000" /=) . fst
 beatDuration :: Fractional a => (a, a, a) -> a
 beatDuration (startBeat, endBeat, value) = (endBeat - startBeat) / value
 
+-- | Get the moment that a row occurs in minutes
+rowMoment
+  :: (Fractional a1, Integral a2, Ord a1)
+  => [(a1, a1, a1)]
+  -> a2
+  -> a2
+  -> a2
+  -> a1
+rowMoment plusEndBeats measureLen previousMeasures currentMeasureBeat =
+  let currentBeat =
+          4
+            * fromIntegral (previousMeasures * measureLen + currentMeasureBeat)
+            / fromIntegral measureLen
+      previousBpms          = filter ((<= currentBeat) . fst3) plusEndBeats
+      (startBeat, _, value) = last previousBpms
+  in  sum (map beatDuration $ init previousBpms)
+        + (currentBeat - startBeat)
+        / value
+
 -- | Get the moment that each row occurs in minutes
 insertMoments
-  :: (Foldable t1, Fractional b, Foldable t2, Ord b)
+  :: (Foldable t1, Foldable t2, Fractional b, Ord b)
   => [(b, b)]
   -> t1 (t2 String)
   -> [(String, b)]
 insertMoments songBpms measures =
-  let totalBeats = toInteger $ length measures * 4
-  in
-    let plusEndBeats = withEndBeats songBpms $ fromInteger totalBeats
-    in
-      filter notEmpty $ concat $ foldl
+  let rowMoment' =
+          rowMoment $ withEndBeats songBpms $ fromIntegral $ length measures * 4
+  in  filter notEmpty $ concat $ foldl
         (\acc measure ->
-          acc
-            ++ [ foldl
-                   (\acc' row ->
-                     acc'
-                       ++ [ ( row
-                            , let
-                                currentBeat =
-                                  4
-                                    * fromIntegral
-                                        ( length acc
-                                        * length measure
-                                        + length acc'
-                                        )
-                                    / fromIntegral (length measure)
-                              in  let previousBpms = filter
-                                        (\(startBeat, _, __) ->
-                                          startBeat <= currentBeat
-                                        )
-                                        plusEndBeats
-                                  in  sum (map beatDuration $ init previousBpms)
-                                        + let (startBeat, _, value) =
-                                                last previousBpms
-                                          in  (currentBeat - startBeat) / value
-                            )
-                          ]
-                   )
-                   []
-                   measure
-               ]
+          let rowMoment'' = rowMoment' (length measure) (length acc)
+          in  append
+                acc
+                (foldl (liftM2 (.) append (flip (,) . rowMoment'' . length))
+                       []
+                       measure
+                )
         )
         []
         measures
@@ -92,39 +91,37 @@ insertMoments songBpms measures =
 -- until the row list is empty and return the accumulated values.
 quantize'
   :: (Ord b, Fractional b)
-  => [(a, b)]
-  -> [(a, Rational)]
-  -> Rational
+  => [(a, Rational)]
+  -> Ratio Integer
   -> Integer
   -> b
+  -> [(a, b)]
   -> [(a, Rational)]
-quantize' [] quant _ __ ___ = quant
-quantize' ((row, timing) : chart) quant currentSnap duration avgBpm =
-  let proportion = timing / (fromIntegral duration / avgBpm)
+quantize' quant _ __ ___ [] = quant
+quantize' quant currentSnap duration avgBpm ((row, timing) : chart) =
+  let
+    proportion = timing / (fromIntegral duration / avgBpm)
+    next       = currentSnap + (1 % (duration * 192))
   in
-    let next = currentSnap + (1 % (duration * 192))
-    in
-      if proportion < fromRational next
+    if proportion < fromRational next
+      then
+        if (fromRational next - proportion)
+           > (proportion - fromRational currentSnap)
         then
-          if (fromRational next - proportion)
-             > (proportion - fromRational currentSnap)
-          then
-            quantize' chart (quant ++ [(row, currentSnap)]) next duration avgBpm
-          else
-            quantize' chart (quant ++ [(row, next)]) next duration avgBpm
-        else quantize' ((row, timing) : chart) quant next duration avgBpm
+          quantize' (quant ++ [(row, currentSnap)]) next duration avgBpm chart
+        else
+          quantize' (quant ++ [(row, next)]) next duration avgBpm chart
+      else quantize' quant next duration avgBpm ((row, timing) : chart)
 
 -- | Quantize the given chart to the closest 192nd snap of the average bpm of the song
-quantize :: RealFrac a1 => [(a2, a1)] -> a1 -> [(a2, Rational)]
-quantize chart avgBpm =
-  let duration = ceiling $ maximum (map snd chart) * avgBpm
-  in  quantize' chart [] (0 % 1) duration avgBpm
+quantize :: RealFrac a1 => a1 -> [(a2, a1)] -> [(a2, Rational)]
+quantize avgBpm chart =
+  quantize' [] (0 % 1) (ceiling $ maximum (map snd chart) * avgBpm) avgBpm chart
 
 -- | Quantize the charts in a song
 quantized :: Song -> [[(String, Rational)]]
 quantized song =
-  let avgBpm = averageBpm song
-  in  map (flip quantize avgBpm . insertMoments (bpms song)) (charts song)
+  map (quantize (averageBpm song) . (insertMoments (bpms song))) (charts song)
 
 -- | Append a quantized row to a string
 foldQuantized :: Show a => String -> (String, a) -> String
@@ -144,3 +141,11 @@ getChartkeys = Set.fromList . map getChartkey . quantized
 -- | Return True if a path is "." or ".."
 notDot :: String -> Bool
 notDot = liftM2 (&&) ("." /=) (".." /=)
+
+-- | Get the first element of a triplet
+fst3 :: (a, b, c) -> a
+fst3 (value, _, __) = value
+
+-- | Append an element to the end of a list
+append :: [a] -> a -> [a]
+append = (. return) . (++)

@@ -15,7 +15,7 @@ import           Text.Parsec.Text.Lazy
 
 -- | Go through given paths recursively, find .sm files, get their chartkeys, check for
 -- duplicates, and replace duplicates with a symlink
-dedupe :: [FilePath] -> Map (Set (Digest SHA1State)) [Char] -> IO [Char]
+dedupe :: [FilePath] -> Map (Set (Digest SHA1State)) String -> IO String
 dedupe [] songs = do
   putStrLn "Showing chartkeys"
   return $ foldl (foldl ((. ((' ' :) . showDigest)) . (++)))
@@ -30,19 +30,15 @@ dedupe (path : paths) songs = do
         Left error -> return $ show error
         Right steps ->
           let chartkeys = getChartkeys steps
-          in  let parent = takeDirectory path
-              in  case Map.lookup chartkeys songs of
-                    Just target -> do
-                      putStrLn
-                        $  "Found duplicate of "
-                        ++ target
-                        ++ " in "
-                        ++ parent
-                      putStrLn "Creating symlink..."
-                      removeDirectoryRecursive parent
-                      createDirectoryLink target parent
-                      dedupe paths songs
-                    Nothing -> dedupe paths $ Map.insert chartkeys parent songs
+              parent    = takeDirectory path
+          in  case Map.lookup chartkeys songs of
+                Just target -> do
+                  putStrLn $ "Found duplicate of " ++ target ++ " in " ++ parent
+                  putStrLn "Creating symlink..."
+                  removeDirectoryRecursive parent
+                  createDirectoryLink target parent
+                  dedupe paths songs
+                Nothing -> dedupe paths $ Map.insert chartkeys parent songs
     else do
       isDirectory <- doesDirectoryExist path
       if isDirectory
