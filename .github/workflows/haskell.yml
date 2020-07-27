@@ -38,3 +38,7 @@ jobs:
       run: cabal build --enable-tests --enable-benchmarks all
     - name: Run tests
       run: cabal test all
+    - uses: actions/upload-artifact@v2
+      with:
+        name: cabal-store
+        path: ~/cabal/store
