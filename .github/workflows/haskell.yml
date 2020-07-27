@@ -40,5 +40,5 @@ jobs:
       run: cabal test all
     - uses: actions/upload-artifact@v2
       with:
-        name: cabal-store
-        path: ~/.cabal/store
+        name: cabal-packages
+        path: ~/.cabal/packages
