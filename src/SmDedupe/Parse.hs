@@ -7,8 +7,9 @@ module SmDedupe.Parse
   )
 where
 
+import           Data.Char
 import           Text.Parsec
-import           Text.Parsec.Text.Lazy
+import           Text.Parsec.ByteString
 
 data Section = Bpms [(Double, Double)] | Chart [[String]] | Extra
 
@@ -21,25 +22,30 @@ data Song = Song
 endSection :: Parser ()
 endSection = do
   char ';'
-  spaces
+  manyTill anyChar $ skipMany1 (char '#') <|> eof
+  return ()
 
 lastMeasure :: Parser [String]
 lastMeasure = do
   measure <- manyTill row $ char ';'
-  spaces
+  spaces'
   return measure
 
 row :: Parser String
-row = manyTill anyChar spaces
+row = do
+  result <- manyTill (noneOf "/") spaces'
+  sepEndBy comment spaces'
+  return result
+
 
 rows :: Parser [String]
 rows = sepEndBy1 (many1 alphaNum) endOfLine
 
 comma :: Parser ()
 comma = do
-  spaces
+  spaces'
   char ','
-  spaces
+  spaces'
 
 measures :: Parser [[String]]
 measures = sepBy1 rows comma
@@ -56,14 +62,14 @@ notes = do
   manyTill anyChar $ char ':'
   -- ???
   manyTill anyChar $ char ':'
-  spaces
+  spaces'
   (measures : _) <- manyTill measures endSection
   return $ Chart measures
 
 extra :: Parser Section
 extra = do
   manyTill anyChar endSection
-  spaces
+  spaces'
   return Extra
 
 bpm :: Parser (Double, Double)
@@ -90,29 +96,37 @@ parseBpms = do
 
 section :: Parser Section
 section = do
-  begin <- string "#" <|> string "//"
-  case begin of
-    "#" -> do
-      title <- manyTill anyChar $ string ":"
-      case title of
-        "NOTES" -> notes
-        "BPMS"  -> parseBpms
-        _       -> extra
-    "//" -> comment
+  title <- manyTill anyChar $ string ":"
+  case title of
+    "NOTES" -> notes
+    "BPMS"  -> parseBpms
+    _       -> extra
 
-comment :: Parser Section
+comment :: Parser ()
 comment = do
+  string "//"
   manyTill anyChar endOfLine
-  return Extra
+  return ()
 
 parseSm :: Parser Song
 parseSm = do
-  results <- manyTill section eof
+  manyTill anyChar $ char '#'
+  results <- many section
   return $ foldl
     (\song section -> case section of
       Bpms  newBpms  -> song { bpms = newBpms }
-      Chart newChart -> song { charts = charts song ++ [newChart] }
+      Chart newChart -> song { charts = newChart : charts song }
       Extra          -> song
     )
     Song { bpms = [], charts = [] }
     results
+
+-- thank you for putting zero-width spaces in your .sm files
+spaceOrIgnorable :: Parser Char
+spaceOrIgnorable = space <|> satisfy ((Format ==) . generalCategory)
+
+spaces' :: Parser ()
+spaces' = do
+  skipMany spaceOrIgnorable
+  result <- sepEndBy comment $ skipMany spaceOrIgnorable
+  return ()
