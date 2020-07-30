@@ -43,7 +43,7 @@ jobs:
       with:
         name: sm-dedupe-${{ runner.os }}
         path: ./dist/bin/sm-dedupe
-  build (windows):
+  build_windows:
     runs-on: windows-latest
     
     steps:
