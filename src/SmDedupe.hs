@@ -11,6 +11,7 @@ import           Data.Digest.Pure.SHA
 import           Data.Ratio
 import           SmDedupe.Parse
 import           Control.Monad
+import           Control.Arrow
 
 -- | Insert ending beat into parsed bpm values
 withEndBeats :: [(b, c)] -> b -> [(b, b, c)]
@@ -26,8 +27,8 @@ foldBeats acc (startBeat, endBeat, value) = acc + (endBeat - startBeat) * value
 
 -- | Get the average bpm of a song when it has multiple bpms
 averageBpm' :: Song -> Double
-averageBpm' (Song songBpms songCharts) =
-  let totalBeats = fromIntegral $ length (head songCharts) * 4
+averageBpm' (Song songBpms (firstChart : _)) =
+  let totalBeats = fromIntegral $ length firstChart * 4
       beatsSum   = foldl foldBeats 0 (withEndBeats songBpms totalBeats)
   in  beatsSum / totalBeats
 
@@ -64,27 +65,27 @@ rowMoment plusEndBeats measureLen previousMeasures currentMeasureBeat =
         + (currentBeat - startBeat)
         / value
 
+mapMeasure
+  :: (Num b1, Enum b1) => (Int -> b2 -> b1 -> c) -> ([a], b2) -> [(a, c)]
+mapMeasure rowMoment (measure, previousMeasures) =
+  let rowMoment' = rowMoment (length measure) previousMeasures
+  in  zipWith (curry (second rowMoment')) measure [0 ..]
+
 -- | Get the moment that each row occurs in minutes
 insertMoments
-  :: (Foldable t1, Foldable t2, Fractional b, Ord b)
-  => [(b, b)]
-  -> t1 (t2 String)
-  -> [(String, b)]
-insertMoments songBpms measures =
-  let rowMoment' =
-          rowMoment $ withEndBeats songBpms $ fromIntegral $ length measures * 4
-  in  filter notEmpty $ concat $ foldl
-        (\acc measure ->
-          let rowMoment'' = rowMoment' (length measure) (length acc)
-          in  append
-                acc
-                (foldl (liftM2 (.) append (flip (,) . rowMoment'' . length))
-                       []
-                       measure
-                )
-        )
-        []
-        measures
+  :: (Fractional b, Ord b) => [(b, b)] -> [[String]] -> [(String, b)]
+insertMoments songBpms measures = filter notEmpty $ concat $ zipWith
+  (curry
+    ( mapMeasure
+    $ rowMoment
+    $ withEndBeats songBpms
+    $ fromIntegral
+    $ length measures
+    * 4
+    )
+  )
+  measures
+  [0 ..]
 
 -- | Check if the current row happens before the next snap, if it does, assign the current
 -- row either the current snap or the next snap, depending on which one is closer. Continue
@@ -97,7 +98,7 @@ quantize'
   -> b
   -> [(a, b)]
   -> [(a, Rational)]
-quantize' quant _ __ ___ [] = quant
+quantize' quant _ __ ___ [] = reverse quant
 quantize' quant currentSnap duration avgBpm ((row, timing) : chart) =
   let
     proportion = timing / (fromIntegral duration / avgBpm)
@@ -108,9 +109,9 @@ quantize' quant currentSnap duration avgBpm ((row, timing) : chart) =
         if (fromRational next - proportion)
            > (proportion - fromRational currentSnap)
         then
-          quantize' (quant ++ [(row, currentSnap)]) next duration avgBpm chart
+          quantize' ((row, currentSnap) : quant) next duration avgBpm chart
         else
-          quantize' (quant ++ [(row, next)]) next duration avgBpm chart
+          quantize' ((row, next) : quant) next duration avgBpm chart
       else quantize' quant next duration avgBpm ((row, timing) : chart)
 
 -- | Quantize the given chart to the closest 192nd snap of the average bpm of the song
@@ -121,18 +122,18 @@ quantize avgBpm chart =
 -- | Quantize the charts in a song
 quantized :: Song -> [[(String, Rational)]]
 quantized song =
-  map (quantize (averageBpm song) . (insertMoments (bpms song))) (charts song)
-
--- | Append a quantized row to a string
-foldQuantized :: Show a => String -> (String, a) -> String
-foldQuantized acc (row, moment) = acc ++ "," ++ row ++ "," ++ show moment
+  map (quantize (averageBpm song) . insertMoments (bpms song)) (charts song)
 
 -- | Get the chartkey of a single chart
 getChartkey :: Show a => [(String, a)] -> Digest SHA1State
-getChartkey ((firstRow, firstMoment) : rows) = sha1 $ ByteString.pack $ foldl
-  foldQuantized
-  (firstRow ++ "," ++ show firstMoment)
-  rows
+getChartkey ((firstRow, firstMoment) : rows) =
+  sha1
+    $  ByteString.pack
+    $  firstRow
+    ++ ","
+    ++ show firstMoment
+    -- TODO: make more readable
+    ++ concatMap (uncurry ((("," ++) .) . (. (("," ++) . show)) . (++))) rows
 
 -- | Get all the chartkeys for a song
 getChartkeys :: Song -> Set (Digest SHA1State)
@@ -145,7 +146,3 @@ notDot = liftM2 (&&) ("." /=) (".." /=)
 -- | Get the first element of a triplet
 fst3 :: (a, b, c) -> a
 fst3 (value, _, __) = value
-
--- | Append an element to the end of a list
-append :: [a] -> a -> [a]
-append = (. return) . (++)
