@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: ba1d1feb06d764e11f0acf14c43c7827325e8934d1bc5db89ee41bff2eaacdfa
+-- hash: 398fc3e5a325ca80f04a97ddaedc754d409e86cdeaa6fbec5c5da54800c121c6
 
 name:           sm-dedupe
 version:        0.1.0.0
@@ -44,13 +44,13 @@ library
     , text >=1.2.3.2 && <2
   default-language: Haskell2010
 
-executable sm-dedupe-exe
+executable sm-dedupe
   main-is: Main.hs
   other-modules:
       Paths_sm_dedupe
   hs-source-dirs:
       app
-  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -O3 -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       SHA >=1.6.4.4 && <2
     , base >=4.14.0.0 && <5
