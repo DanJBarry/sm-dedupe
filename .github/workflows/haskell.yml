@@ -21,18 +21,6 @@ jobs:
         ghc-version: '8.10.1'
         stack-version: 'latest'
 
-    - name: Cache
-      uses: actions/cache@v2
-      env:
-        cache-name: cache-stack
-      with:
-        path: ~/.stack
-        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/stack.yaml.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-build-${{ env.cache-name }}-
-          ${{ runner.os }}-build-
-          ${{ runner.os }}-
-
     - name: Build
       run: stack build --system-ghc
     - name: Copy over binary
@@ -58,7 +46,7 @@ jobs:
     - name: Copy over binary
       shell: powershell
       run: |
-          mkdir -p .\dist\bin
+          mkdir -p .\dist
           move "$(stack path --local-install-root --system-ghc)\bin" .\dist
     - uses: actions/upload-artifact@v2
       with:
