@@ -17,7 +17,7 @@
 #
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
-resolver: ghc-8.10.1
+resolver: lts-16.9
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -35,7 +35,6 @@ packages:
 # forks / in-progress versions pinned to a git hash. For example:
 #
 extra-deps:
-  - SHA-1.6.4.4@sha256:3b7523df3e2186ae8c5ac78c745efb586814afe9c775b886a747556d9f4d429c,4920
 # - acme-missiles-0.3
 # - git: https://github.com/commercialhaskell/stack.git
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a
