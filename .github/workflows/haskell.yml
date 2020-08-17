@@ -8,8 +8,11 @@ on:
 
 jobs:
   build:
+    strategy:
+      matrix:
+        os: [ubuntu, macos]
 
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}-latest
 
     steps:
     - uses: actions/checkout@v2
@@ -17,18 +20,6 @@ jobs:
       with:
         ghc-version: '8.10.1'
         stack-version: 'latest'
-
-    - name: Cache
-      uses: actions/cache@v2
-      env:
-        cache-name: cache-stack
-      with:
-        path: ~/.stack
-        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/stack.yaml.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-build-${{ env.cache-name }}-
-          ${{ runner.os }}-build-
-          ${{ runner.os }}-
 
     - name: Build
       run: stack build --system-ghc
@@ -38,5 +29,26 @@ jobs:
           mv "$(stack path --local-install-root --system-ghc)/bin" ./dist
     - uses: actions/upload-artifact@v2
       with:
-        name: sm-dedupe
-        path: ./dist/bin
+        name: sm-dedupe-${{ runner.os }}
+        path: ./dist/bin/sm-dedupe
+  build_windows:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-haskell@v1
+      with:
+        ghc-version: '8.10.1'
+        stack-version: 'latest'
+
+    - name: Build
+      run: stack build --system-ghc
+    - name: Copy over binary
+      shell: powershell
+      run: |
+          mkdir -p .\dist
+          move "$(stack path --local-install-root --system-ghc)\bin" .\dist
+    - uses: actions/upload-artifact@v2
+      with:
+        name: sm-dedupe-${{ runner.os }}
+        path: .\dist\bin\sm-dedupe.exe
