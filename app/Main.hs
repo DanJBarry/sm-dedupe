@@ -7,8 +7,11 @@ import           Prelude                 hiding ( lookup )
 import qualified Data.Map                      as Map
 import           Data.Map                       ( Map )
 import           Data.Set                       ( Set )
-import           System.Directory               ( removeDirectoryLink )
+import           System.Directory               ( removeDirectoryLink
+                                                , canonicalizePath
+                                                )
 import           System.FilePath                ( dropTrailingPathSeparator )
+import           Control.Monad.IO.Class
 import           Data.Digest.Pure.SHA
 import           Path
 import           Path.IO
@@ -17,26 +20,37 @@ import           SmDedupe.Parse
 import           System.Console.CmdArgs
 import           System.Environment
 import           Text.Parsec.ByteString
-import           Control.Monad                  ( liftM )
 
-data Opts = Opts {directory :: FilePath, check :: Bool, pretend :: Bool, unlink :: Bool}
+data Opts = Opts {directories :: [FilePath], check :: Bool, pretend :: Bool, unlink :: Bool}
               deriving (Show, Data, Typeable)
 
 opts :: Opts
 opts =
   Opts
-      { directory = def &= args &= typ "DIRS"
-      , check     = def &= help
+      { directories = def &= args &= typ "DIRS"
+      , check       = def &= help
         "Only runs the parser, does not check chart keys or delete directories"
-      , pretend   =
+      , pretend     =
         def &= help
           "Do a dry run, printing out found duplicates without deleting them"
-      , unlink    = def
+      , unlink      = def
         &= help "Undo symlinks and copy over their target directories"
       }
     &= program "sm-dedupe"
     &= summary "sm-dedupe v0.1.0, (C) Daniel Barry"
     &= help "A tool to remove duplicates from your Stepmania songs folder"
+
+parseDirs' :: MonadIO m => [Path Abs Dir] -> [FilePath] -> m [Path Abs Dir]
+parseDirs' result [] = return result
+parseDirs' result (currentDirectory : directories) =
+  case parseAbsDir currentDirectory of
+    Right absoluteDir -> parseDirs' (result ++ [absoluteDir]) directories
+    _                 -> do
+      resolvedDir <- resolveDir' currentDirectory
+      parseDirs' (result ++ [resolvedDir]) directories
+
+parseDirs :: MonadIO m => [FilePath] -> m [Path Abs Dir]
+parseDirs = parseDirs' []
 
 -- | Go through given paths recursively, find .sm files, get their chartkeys, check for
 -- duplicates, and replace duplicates with a symlink
@@ -127,10 +141,9 @@ undo opts affected (currentDirectory : directories) = do
 
 main :: IO ()
 main = do
-  parsedOpts  <- cmdArgs opts
-  parsedDir   <- parseRelDir $ directory parsedOpts
-  absoluteDir <- makeAbsolute parsedDir
-  result      <- if unlink parsedOpts
-    then undo parsedOpts 0 [absoluteDir]
-    else dedupe parsedOpts Map.empty 0 [absoluteDir] []
+  parsedOpts <- cmdArgs opts
+  parsedDirs <- parseDirs (directories parsedOpts)
+  result <- if unlink parsedOpts
+    then undo parsedOpts 0 parsedDirs
+    else dedupe parsedOpts Map.empty 0 parsedDirs []
   putStrLn result
