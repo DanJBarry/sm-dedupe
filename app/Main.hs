@@ -5,13 +5,16 @@ module Main where
 
 import           Prelude                 hiding ( lookup )
 import qualified Data.Map                      as Map
+import qualified Data.Set                      as Set
 import           Data.Map                       ( Map )
 import           Data.Set                       ( Set )
 import           System.Directory               ( removeDirectoryLink
                                                 , canonicalizePath
                                                 )
 import           System.FilePath                ( dropTrailingPathSeparator )
+import           Control.Monad
 import           Control.Monad.IO.Class
+import           Data.Char
 import           Data.Digest.Pure.SHA
 import           Path
 import           Path.IO
@@ -19,20 +22,32 @@ import           SmDedupe
 import           SmDedupe.Parse
 import           System.Console.CmdArgs
 import           System.Environment
+import           System.IO
 import           Text.Parsec.ByteString
+import           Text.Printf
 
-data Opts = Opts {directories :: [FilePath], check :: Bool, pretend :: Bool, unlink :: Bool}
-              deriving (Show, Data, Typeable)
+data Opts =
+  Opts
+      { directories :: [FilePath]
+      , exclude :: FilePath
+      , force :: Bool
+      , dryRun :: Bool
+      , unlink :: Bool
+      }
+        deriving (Show, Data, Typeable)
+
+type Songmap b = Map (Set (Digest SHA1State)) (Path b Dir)
 
 opts :: Opts
 opts =
   Opts
       { directories = def &= args &= typ "DIRS"
-      , check       = def &= help
-        "Only runs the parser, does not check chart keys or delete directories"
-      , pretend     =
+      , exclude     = def &= help "Directories to exclude" &= typ "DIRS"
+      , force       =
         def &= help
-          "Do a dry run, printing out found duplicates without deleting them"
+          "Do not display a prompt before deleting or unlinking a directory"
+      , dryRun      = def &= explicit &= name "d" &= name "dry-run" &= help
+        "Do a dry run, printing out found duplicates without deleting them"
       , unlink      = def
         &= help "Undo symlinks and copy over their target directories"
       }
@@ -40,110 +55,105 @@ opts =
     &= summary "sm-dedupe v0.1.0, (C) Daniel Barry"
     &= help "A tool to remove duplicates from your Stepmania songs folder"
 
-parseDirs' :: MonadIO m => [Path Abs Dir] -> [FilePath] -> m [Path Abs Dir]
-parseDirs' result [] = return result
-parseDirs' result (currentDirectory : directories) =
-  case parseAbsDir currentDirectory of
-    Right absoluteDir -> parseDirs' (result ++ [absoluteDir]) directories
-    _                 -> do
-      resolvedDir <- resolveDir' currentDirectory
-      parseDirs' (result ++ [resolvedDir]) directories
-
-parseDirs :: MonadIO m => [FilePath] -> m [Path Abs Dir]
-parseDirs = parseDirs' []
-
--- | Go through given paths recursively, find .sm files, get their chartkeys, check for
--- duplicates, and replace duplicates with a symlink
 dedupe
-  :: (Show a, Num a)
+  :: (Traversable t1, Foldable t2)
   => Opts
-  -> Map (Set (Digest SHA1State)) (Path Abs Dir)
-  -> a
-  -> [Path Abs Dir]
-  -> [Path Abs File]
-  -> IO [Char]
-dedupe opts songs affected [] []
-  | check opts
-  = return $ "Successfully parsed " ++ show affected ++ " .sm file(s)"
-  | pretend opts
-  = return $ "Found " ++ show affected ++ " duplicate(s)"
-  | otherwise
-  = return $ "Replaced " ++ show affected ++ " new duplicate(s) with symlinks"
-dedupe opts songs affected (currentDirectory : directories) [] = do
-  symlink <- isSymlink currentDirectory
-  if symlink
-    then dedupe opts songs affected directories []
-    else do
-      (newDirectories, newFiles) <- listDir currentDirectory
-      dedupe opts songs affected (directories ++ newDirectories) newFiles
-dedupe opts songs affected directories (currentFile : files) = do
-  case fileExtension currentFile of
-    Right ".sm" -> do
-      parseResult <- parseFromFile parseSm $ toFilePath currentFile
-      case parseResult of
-        Left  parseError -> return $ show parseError
-        Right steps      -> if check opts
-          then dedupe opts songs (affected + 1) directories files
-          else
-            let chartkeys       = getChartkeys steps
-                parentDirectory = parent currentFile
-            in  case Map.lookup chartkeys songs of
-                  Just target -> do
-                    putStrLn
-                      $  "Found duplicate of "
-                      ++ toFilePath target
-                      ++ " in "
-                      ++ toFilePath parentDirectory
-                    if pretend opts
-                      then dedupe opts songs (affected + 1) directories files
-                      else do
-                        putStrLn "Creating symlink..."
-                        removeDirRecur parentDirectory
-                        createDirLink target parentDirectory
-                        dedupe opts songs (affected + 1) directories files
-                  Nothing -> dedupe
-                    opts
-                    (Map.insert chartkeys parentDirectory songs)
-                    affected
-                    directories
-                    files
-    _ -> dedupe opts songs affected directories files
+  -> t2 (Path Abs Dir)
+  -> t1 (Path b Dir)
+  -> IO String
+dedupe opts' excludeDirs dirs = do
+  listDirs <- mapM listDirRecur dirs
+  result   <-
+    let files = concatMap (filter (smAndNotChildOf excludeDirs) . snd) listDirs
+    in  foldM (dedupe' opts') Map.empty files
+  return $ show (length result) ++ " unique songs"
 
-undo :: (Show a, Num a) => Opts -> a -> [Path Abs Dir] -> IO [Char]
-undo opts affected []
-  | pretend opts = return $ "Found " ++ show affected ++ " symlinks"
-  | otherwise    = return $ "Unlinked " ++ show affected ++ " directories"
-undo opts affected (currentDirectory : directories) = do
-  symlink <- isSymlink currentDirectory
+dedupe' :: Opts -> Songmap b1 -> Path b1 t -> IO (Songmap b1)
+dedupe' opts' songs file = do
+  parseResult <- parseFromFile parseSm $ toFilePath file
+  case parseResult of
+    Left parseError ->
+      printf "Error parsing %s:\n%s\n" (toFilePath file) (show parseError)
+        >> return songs
+    Right steps ->
+      let
+        chartkeys       = getChartkeys steps
+        parentDirectory = parent file
+      in
+        case Map.lookup chartkeys songs of
+          Just target ->
+            printf "Found duplicate of %s in %s\n"
+                   (toFilePath target)
+                   (toFilePath parentDirectory)
+              >> if dryRun opts'
+                   then return songs
+                   else if force opts'
+                     then makeSymlink target parentDirectory >> return songs
+                     else
+                       makeRelativeToCurrentDir parentDirectory
+                       >>= printf "Remove %s? "
+                       .   toFilePath
+                       >>  hFlush stdout
+                       >>  getLine
+                       >>= yesNo
+                             (makeSymlink target parentDirectory >> return songs
+                             )
+                             (return songs)
+          Nothing -> return $ Map.insert chartkeys parentDirectory songs
+
+-- Walk handler that ignores all arguments and excludes a constant list of directories
+excludeHandler :: [Path b1 Dir] -> b2 -> b3 -> b4 -> IO (WalkAction b1)
+excludeHandler = const . const . const . return . WalkExclude
+
+makeSymlink :: Path b0 Dir -> Path b1 Dir -> IO ()
+makeSymlink target parentDirectory =
+  putStrLn "Creating symlink..."
+    >> removeDirRecur parentDirectory
+    >> createDirLink target parentDirectory
+
+parseDir :: MonadIO m => FilePath -> m (Path Abs Dir)
+parseDir directory = case parseAbsDir directory of
+  Right absoluteDir -> return absoluteDir
+  _                 -> resolveDir' directory
+
+undo :: Traversable t => Opts -> [Path Abs Dir] -> t (Path b Dir) -> IO String
+undo opts' excludeDirs dirs = do
+  result <- mapM
+    (walkDirAccum (Just (excludeHandler excludeDirs))
+                  (const . const . undo' opts')
+    )
+    dirs
+  return $ "Unlinked " ++ show (sum (concat result)) ++ " directories"
+
+undo' :: Num a => Opts -> Path b1 Dir -> IO [a]
+undo' opts' dir = do
+  symlink <- isSymlink dir
   if symlink
     then do
-      targetPath <- getSymlinkTarget currentDirectory
+      targetPath <- getSymlinkTarget dir
       case parseAbsDir targetPath of
-        Right target -> do
-          putStrLn
-            $  "Found symlink: "
-            ++ show currentDirectory
-            ++ " -> "
-            ++ show target
-          if pretend opts
-            then undo opts (affected + 1) directories
-            else do
-              putStrLn "Copying files..."
-              removeDirectoryLink $ dropTrailingPathSeparator $ toFilePath
-                currentDirectory
-              copyDirRecur target currentDirectory
-              (newDirectories, _) <- listDir currentDirectory
-              undo opts (affected + 1) $ directories ++ newDirectories
-        _ -> undo opts affected directories
-    else do
-      (newDirectories, _) <- listDir currentDirectory
-      undo opts affected $ directories ++ newDirectories
+        Right target ->
+          printf "Found symlink: %s -> %s\n"
+                 (toFilePath dir)
+                 (toFilePath target)
+            >> if dryRun opts'
+                 then return []
+                 else do
+                   putStrLn "Copying files..."
+                   removeDirectoryLink $ dropTrailingPathSeparator $ toFilePath
+                     dir
+                   copyDirRecur target dir
+                   return [1]
+        _ -> return []
+    else return []
 
 main :: IO ()
 main = do
-  parsedOpts <- cmdArgs opts
-  parsedDirs <- parseDirs (directories parsedOpts)
-  result <- if unlink parsedOpts
-    then undo parsedOpts 0 parsedDirs
-    else dedupe parsedOpts Map.empty 0 parsedDirs []
+  parsedOpts  <- cmdArgs opts
+  includeDirs <- mapM parseDir $ directories parsedOpts
+  excludeDirs <- mapM parseDir $ splitCommas $ exclude parsedOpts
+  result      <-
+    let action          = if unlink parsedOpts then undo else dedupe
+        filteredInclude = filterChildren includeDirs
+    in  action parsedOpts excludeDirs filteredInclude
   putStrLn result
