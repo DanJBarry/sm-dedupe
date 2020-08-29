@@ -96,9 +96,7 @@ dedupe' opts' songs file = do
                    else if force opts'
                      then makeSymlink target parentDirectory >> return songs
                      else
-                       makeRelativeToCurrentDir parentDirectory
-                       >>= printf "Remove %s? "
-                       .   toFilePath
+                       putStr "Remove duplicate? "
                        >>  hFlush stdout
                        >>  getLine
                        >>= yesNo
@@ -115,15 +113,21 @@ excludeHandler = const . const . const . return . WalkExclude
 -- to target in its place
 makeSymlink :: Path b0 Dir -> Path b1 Dir -> IO ()
 makeSymlink target parentDirectory =
-  putStrLn "Creating symlink..."
-    >> removeDirRecur parentDirectory
+  removeDirRecur parentDirectory
     >> createDirLink target parentDirectory
+    >> putStrLn "Symlink created"
 
 -- | Parse a string into an absolute path to a directory
 parseDir :: MonadIO m => FilePath -> m (Path Abs Dir)
 parseDir directory = case parseAbsDir directory of
   Right absoluteDir -> return absoluteDir
   _                 -> resolveDir' directory
+
+removeSymlink :: Path b0 Dir -> Path b1 Dir -> IO ()
+removeSymlink target dir =
+  removeDirectoryLink (dropTrailingPathSeparator $ toFilePath dir)
+    >> copyDirRecur target dir
+    >> putStrLn "Directory copied"
 
 -- | Walk through dirs, delete any directory symlinks, and copy the contents of the
 -- symlink target to its location
@@ -150,12 +154,14 @@ undo' opts' dir = do
                  (toFilePath target)
             >> if dryRun opts'
                  then return []
-                 else do
-                   putStrLn "Copying files..."
-                   removeDirectoryLink $ dropTrailingPathSeparator $ toFilePath
-                     dir
-                   copyDirRecur target dir
-                   return [1]
+                 else if force opts'
+                   then removeSymlink target dir >> return [1]
+                   else
+                     putStr "Remove symlink and copy over contents? "
+                     >>  hFlush stdout
+                     >>  getLine
+                     >>= yesNo (removeSymlink target dir >> return [1])
+                               (return [])
         _ -> return []
     else return []
 
