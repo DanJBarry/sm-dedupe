@@ -55,6 +55,9 @@ opts =
     &= summary "sm-dedupe v0.1.0, (C) Daniel Barry"
     &= help "A tool to remove duplicates from your Stepmania songs folder"
 
+-- | Walk through dirs, accumulating a map of chartkeys to directories, and remove
+-- any duplicate chartkeys, replacing their parent directory with a symlink, ignore
+-- any directory in excludeDirs
 dedupe
   :: (Traversable t1, Foldable t2)
   => Opts
@@ -68,6 +71,9 @@ dedupe opts' excludeDirs dirs = do
     in  foldM (dedupe' opts') Map.empty files
   return $ show (length result) ++ " unique songs"
 
+-- | Get the chartkey of a file, return a new map with the included chartkey if the
+-- chartkey does not exist yet, remove the directory and create a symlink if it does
+-- exist
 dedupe' :: Opts -> Songmap b1 -> Path b1 t -> IO (Songmap b1)
 dedupe' opts' songs file = do
   parseResult <- parseFromFile parseSm $ toFilePath file
@@ -105,17 +111,22 @@ dedupe' opts' songs file = do
 excludeHandler :: [Path b1 Dir] -> b2 -> b3 -> b4 -> IO (WalkAction b1)
 excludeHandler = const . const . const . return . WalkExclude
 
+-- | makeSymlink target parentDirectory removes parentDirectory and creates a symlink
+-- to target in its place
 makeSymlink :: Path b0 Dir -> Path b1 Dir -> IO ()
 makeSymlink target parentDirectory =
   putStrLn "Creating symlink..."
     >> removeDirRecur parentDirectory
     >> createDirLink target parentDirectory
 
+-- | Parse a string into an absolute path to a directory
 parseDir :: MonadIO m => FilePath -> m (Path Abs Dir)
 parseDir directory = case parseAbsDir directory of
   Right absoluteDir -> return absoluteDir
   _                 -> resolveDir' directory
 
+-- | Walk through dirs, delete any directory symlinks, and copy the contents of the
+-- symlink target to its location
 undo :: Traversable t => Opts -> [Path Abs Dir] -> t (Path b Dir) -> IO String
 undo opts' excludeDirs dirs = do
   result <- mapM
@@ -125,6 +136,7 @@ undo opts' excludeDirs dirs = do
     dirs
   return $ "Unlinked " ++ show (sum (concat result)) ++ " directories"
 
+-- | If dir is a symlink, remove the symlink and copy over the contents it pointed to
 undo' :: Num a => Opts -> Path b1 Dir -> IO [a]
 undo' opts' dir = do
   symlink <- isSymlink dir

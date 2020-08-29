@@ -18,27 +18,25 @@ import           Data.Ratio
 import           Path
 import           SmDedupe.Parse
 
+-- | Add a directory to a list and remove all of its children, or return the original
+-- list if the directory is a child of an existing directory in the list
+addIfNotChild :: [Path b Dir] -> Path b Dir -> [Path b Dir]
 addIfNotChild current dir = if hasNoParents current dir
   then filter (not . flip isChildOrEqual dir) current ++ [dir]
   else current
 
 -- | Get the average bpm of a song, checking if the song only has one bpm
 averageBpm :: Song -> Double
-averageBpm (Song songBpms songCharts) = if length songBpms == 1
-  then snd $ head songBpms
-  else averageBpm' (Song songBpms songCharts)
-
--- | Get the average bpm of a song when it has multiple bpms
-averageBpm' :: Song -> Double
-averageBpm' (Song songBpms (firstChart : _)) =
+averageBpm (Song [songBpm] songCharts) = snd songBpm
+averageBpm (Song songBpms (firstChart : _)) =
   let totalBeats = fromIntegral $ length firstChart * 4
-      beatsSum   = foldl foldBeats 0 (withEndBeats songBpms totalBeats)
-  in  beatsSum / totalBeats
+  in  foldl foldBeats 0 (withEndBeats songBpms totalBeats) / totalBeats
 
 -- | Get total beats of a bpm section
 beatDuration :: Fractional a => (a, a, a) -> a
 beatDuration (startBeat, endBeat, value) = (endBeat - startBeat) / value
 
+-- | Return the smallest list
 filterChildren :: Foldable t => t (Path b Dir) -> [Path b Dir]
 filterChildren = foldl addIfNotChild []
 
@@ -67,6 +65,8 @@ getChartkey ((firstRow, firstMoment) : rows) =
 getChartkeys :: Song -> Set (Digest SHA1State)
 getChartkeys = Set.fromList . concatMap getChartkey . quantize
 
+-- | Return true or false depending on if the list of directories contains a parent of
+-- the given directory
 hasNoParents :: [Path b Dir] -> Path b Dir -> Bool
 hasNoParents = (not .) . flip (any . isChildOrEqual)
 
@@ -74,12 +74,19 @@ if' :: Bool -> p -> p -> p
 if' True  x _ = x
 if' False _ y = y
 
+-- | Add moments to a measure of notes
+insertMoment
+  :: (Num b1, Enum b1) => (Int -> b2 -> b1 -> c) -> ([a], b2) -> [(a, c)]
+insertMoment rowMoment (measure, previousMeasures) =
+  let rowMoment' = rowMoment (length measure) previousMeasures
+  in  zipWith (curry (second rowMoment')) measure [0 ..]
+
 -- | Get the moment that each row occurs in minutes
 insertMoments
   :: (Fractional b, Ord b) => [(b, b)] -> [[String]] -> [(String, b)]
 insertMoments songBpms measures = filter notEmpty $ concat $ zipWith
   (curry
-    ( mapMeasure
+    ( insertMoment
     $ rowMoment
     $ withEndBeats songBpms
     $ fromIntegral
@@ -90,14 +97,9 @@ insertMoments songBpms measures = filter notEmpty $ concat $ zipWith
   measures
   [0 ..]
 
+-- | Return true or false depending on if
 isChildOrEqual :: Path b Dir -> Path b Dir -> Bool
 isChildOrEqual x x' = isProperPrefixOf x' x || x == x'
-
-mapMeasure
-  :: (Num b1, Enum b1) => (Int -> b2 -> b1 -> c) -> ([a], b2) -> [(a, c)]
-mapMeasure rowMoment (measure, previousMeasures) =
-  let rowMoment' = rowMoment (length measure) previousMeasures
-  in  zipWith (curry (second rowMoment')) measure [0 ..]
 
 -- | Check if the value of a row is "0000"
 notEmpty :: (String, b) -> Bool
@@ -164,6 +166,8 @@ rowMoment plusEndBeats measureLen previousMeasures currentMeasureBeat =
         + (currentBeat - startBeat)
         / value
 
+-- | Return true or false depending on if the file has an .sm extension and is not a
+-- child of any of the given directories
 smAndNotChildOf :: Foldable t => t (Path b Dir) -> Path b File -> Bool
 smAndNotChildOf excludeDirs file = case fileExtension file of
   Right ".sm" -> not (any (`isProperPrefixOf` file) excludeDirs)
@@ -189,6 +193,6 @@ withEndBeats songBpms totalBeats =
       endBeats             = tail startBeats ++ [totalBeats]
   in  zip3 startBeats endBeats values
 
--- |
+-- | yesNo a b x does a if x matches ^[yY] and does b otherwise
 yesNo :: c -> c -> String -> c
-yesNo = flip . flip (if' . ap ((||) . null) (('y' ==) . toLower . head))
+yesNo = flip . flip (if' . ap ((&&) . not . null) (('y' ==) . toLower . head))
